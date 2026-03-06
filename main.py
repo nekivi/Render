@@ -4,7 +4,6 @@ from sqlalchemy.orm import Session
 from typing import List, Dict
 import json
 import datetime
-import asyncio  # <-- Этого импорта не хватало
 
 from database import get_db, init_db
 from models import User, Message
@@ -92,7 +91,7 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
         "public_key": db_user.public_key
     }
 
-@app.get("/user/{username}")
+@app.get("/users/{username}")
 def get_user(username: str, db: Session = Depends(get_db)):
     """Получить публичный ключ пользователя"""
     db_user = db.query(User).filter(User.username == username).first()
@@ -105,7 +104,7 @@ def get_user(username: str, db: Session = Depends(get_db)):
     }
 
 @app.post("/messages")
-async def send_message(message: MessageSend, username: str, db: Session = Depends(get_db)):
+def send_message(message: MessageSend, username: str, db: Session = Depends(get_db)):
     """
     Отправка сообщения.
     username - кто отправляет (берется из заголовка, но для простоты передадим как параметр)
@@ -129,11 +128,13 @@ async def send_message(message: MessageSend, username: str, db: Session = Depend
     # Если получатель онлайн (есть WebSocket соединение), пытаемся отправить сразу
     if message.recipient in active_connections:
         # Отправляем уведомление о новом сообщении
-        await active_connections[message.recipient].send_json({
-            "type": "new_message",
-            "sender": username,
-            "timestamp": str(db_message.timestamp)
-        })
+        asyncio.create_task(
+            active_connections[message.recipient].send_json({
+                "type": "new_message",
+                "sender": username,
+                "timestamp": str(db_message.timestamp)
+            })
+        )
     
     return {"status": "ok", "message_id": db_message.id}
 
@@ -183,3 +184,5 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
         # При отключении удаляем из активных соединений
         if username in active_connections:
             del active_connections[username]
+
+# Для запуска: uvicorn main:app --reload
