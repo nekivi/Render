@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List, Dict
 import json
 import datetime
+import asyncio
 
 from database import get_db, init_db
 from models import User, Message
@@ -104,7 +105,7 @@ def get_user(username: str, db: Session = Depends(get_db)):
     }
 
 @app.post("/messages")
-def send_message(message: MessageSend, username: str, db: Session = Depends(get_db)):
+async def send_message(message: MessageSend, username: str, db: Session = Depends(get_db)):
     """
     Отправка сообщения.
     username - кто отправляет (берется из заголовка, но для простоты передадим как параметр)
@@ -128,13 +129,11 @@ def send_message(message: MessageSend, username: str, db: Session = Depends(get_
     # Если получатель онлайн (есть WebSocket соединение), пытаемся отправить сразу
     if message.recipient in active_connections:
         # Отправляем уведомление о новом сообщении
-        asyncio.create_task(
-            active_connections[message.recipient].send_json({
-                "type": "new_message",
-                "sender": username,
-                "timestamp": str(db_message.timestamp)
-            })
-        )
+        await active_connections[message.recipient].send_json({
+            "type": "new_message",
+            "sender": username,
+            "timestamp": str(db_message.timestamp)
+        })
     
     return {"status": "ok", "message_id": db_message.id}
 
