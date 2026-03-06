@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List, Dict
 import json
 import datetime
-import asyncio
+import asyncio  # <-- Этого импорта не хватало
 
 from database import get_db, init_db
 from models import User, Message
@@ -92,7 +92,7 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
         "public_key": db_user.public_key
     }
 
-@app.get("/users/{username}")
+@app.get("/user/{username}")
 def get_user(username: str, db: Session = Depends(get_db)):
     """Получить публичный ключ пользователя"""
     db_user = db.query(User).filter(User.username == username).first()
@@ -183,5 +183,3 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
         # При отключении удаляем из активных соединений
         if username in active_connections:
             del active_connections[username]
-
-# Для запуска: uvicorn main:app --reload
