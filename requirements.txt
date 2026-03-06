@@ -1,10 +1,9 @@
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-websockets==12.0
-sqlalchemy==2.0.23
-psycopg2-binary==2.9.9
-python-jose[cryptography]==3.3.0
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+websockets==15.0
+sqlalchemy==2.0.40
+psycopg2-binary==2.9.10
+python-jose[cryptography]==3.4.0
 passlib[bcrypt]==1.7.4
-python-multipart==0.0.6
-pydantic==2.5.0
-typing-extensions==4.8.0
+python-multipart==0.0.20
+bcrypt==4.2.1  # Явно указываем совместимую версию bcrypt
