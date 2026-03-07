@@ -4,19 +4,15 @@ from sqlalchemy.orm import Session
 from typing import List, Dict
 import json
 import datetime
-import asyncio  # <-- Этого импорта не хватало
-
-from database import get_db, init_db
-from models import User, Message
-from passlib.context import CryptContext
+import asyncio
+import bcrypt
 from pydantic import BaseModel
 
-# Для хеширования паролей
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+from models import get_db, init_db, User, Message
 
 app = FastAPI()
 
-# Разрешаем CORS для любого происхождения (на продакшене лучше ограничить)
+# Разрешаем CORS для любого происхождения
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,6 +25,20 @@ app.add_middleware(
 @app.on_event("startup")
 def startup():
     init_db()
+
+# ---- Вспомогательные функции для паролей ----
+def hash_password(password: str) -> str:
+    """Хеширует пароль с помощью bcrypt"""
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+    return hashed.decode('utf-8')
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Проверяет пароль"""
+    return bcrypt.checkpw(
+        plain_password.encode('utf-8'), 
+        hashed_password.encode('utf-8')
+    )
 
 # ---- Модели Pydantic для API ----
 class UserCreate(BaseModel):
@@ -44,21 +54,26 @@ class MessageSend(BaseModel):
     recipient: str
     ciphertext: str
     nonce: str
-    tag: str  # Добавляем tag
-    encrypted_key: str  # Добавляем encrypted_key
+    tag: str
+    encrypted_key: str
+
+class UserResponse(BaseModel):
+    username: str
+    public_key: str
 
 # ---- HTTP API ----
-
 @app.post("/register")
 def register(user: UserCreate, db: Session = Depends(get_db)):
     """Регистрация нового пользователя"""
+    # Проверяем, существует ли уже такой пользователь
     db_user = db.query(User).filter(User.username == user.username).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Username already registered")
     
-    # Используем bcrypt напрямую
+    # Хешируем пароль
     hashed_password = hash_password(user.password)
     
+    # Создаем нового пользователя
     new_user = User(
         username=user.username,
         password_hash=hashed_password,
@@ -73,14 +88,16 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
 
 @app.post("/login")
 def login(user: UserLogin, db: Session = Depends(get_db)):
-    """Логин пользователя"""
+    """Вход пользователя"""
     db_user = db.query(User).filter(User.username == user.username).first()
     if not db_user:
         raise HTTPException(status_code=400, detail="User not found")
     
+    # Проверяем пароль
     if not verify_password(user.password, db_user.password_hash):
         raise HTTPException(status_code=400, detail="Invalid password")
     
+    # Обновляем время последнего визита
     db_user.last_seen = datetime.datetime.utcnow()
     db.commit()
     
@@ -90,7 +107,7 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
         "public_key": db_user.public_key
     }
 
-@app.get("/users/{username}")
+@app.get("/users/{username}", response_model=UserResponse)
 def get_user(username: str, db: Session = Depends(get_db)):
     """Получить публичный ключ пользователя"""
     db_user = db.query(User).filter(User.username == username).first()
@@ -113,26 +130,28 @@ def send_message(message: MessageSend, sender: str, db: Session = Depends(get_db
     if not recipient:
         raise HTTPException(status_code=404, detail="Recipient not found")
     
-    # Сохраняем сообщение со всеми полями
+    # Сохраняем сообщение со всеми полями шифрования
     db_message = Message(
         sender=sender,
         recipient=message.recipient,
         ciphertext=message.ciphertext,
         nonce=message.nonce,
-        # Добавляем новые поля в модель Message (нужно обновить models.py)
         tag=message.tag,
         encrypted_key=message.encrypted_key
     )
     
     db.add(db_message)
     db.commit()
+    db.refresh(db_message)
     
-    # Если получатель онлайн, уведомляем
+    # Если получатель онлайн (есть WebSocket соединение), пытаемся отправить сразу
     if message.recipient in active_connections:
+        # Отправляем уведомление о новом сообщении
         asyncio.create_task(
             active_connections[message.recipient].send_json({
                 "type": "new_message",
                 "sender": sender,
+                "message_id": db_message.id,
                 "timestamp": str(db_message.timestamp)
             })
         )
@@ -145,7 +164,7 @@ def get_undelivered_messages(username: str, db: Session = Depends(get_db)):
     messages = db.query(Message).filter(
         Message.recipient == username,
         Message.delivered == 0
-    ).all()
+    ).order_by(Message.timestamp).all()
     
     result = []
     for msg in messages:
@@ -154,10 +173,11 @@ def get_undelivered_messages(username: str, db: Session = Depends(get_db)):
             "sender": msg.sender,
             "ciphertext": msg.ciphertext,
             "nonce": msg.nonce,
-            "tag": msg.tag,  # Добавляем tag
-            "encrypted_key": msg.encrypted_key,  # Добавляем encrypted_key
+            "tag": msg.tag,
+            "encrypted_key": msg.encrypted_key,
             "timestamp": str(msg.timestamp)
         })
+        # Помечаем как доставленные
         msg.delivered = 1
     
     db.commit()
@@ -173,12 +193,12 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
     
     # Сохраняем соединение
     active_connections[username] = websocket
+    print(f"WebSocket connected: {username}")
     
     try:
         while True:
-            # Ждем сообщения от клиента (можем использовать для поддержания соединения)
+            # Ждем сообщения от клиента (heartbeat)
             data = await websocket.receive_text()
-            # Пока просто игнорируем, можно добавить heartbeat
             if data == "ping":
                 await websocket.send_text("pong")
     
@@ -186,3 +206,27 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
         # При отключении удаляем из активных соединений
         if username in active_connections:
             del active_connections[username]
+            print(f"WebSocket disconnected: {username}")
+    except Exception as e:
+        print(f"WebSocket error for {username}: {e}")
+        if username in active_connections:
+            del active_connections[username]
+
+# ---- Информационный эндпоинт ----
+@app.get("/")
+def root():
+    return {
+        "name": "Secure Messenger API",
+        "version": "1.0",
+        "status": "running",
+        "endpoints": [
+            "/register - POST",
+            "/login - POST",
+            "/users/{username} - GET",
+            "/messages - POST (with ?sender=username)",
+            "/messages/{username} - GET",
+            "/ws/{username} - WebSocket"
+        ]
+    }
+
+# Для запуска: uvicorn main:app --reload
