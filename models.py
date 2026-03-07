@@ -1,8 +1,6 @@
 from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
 import datetime
-import os
 
 Base = declarative_base()
 
@@ -22,26 +20,9 @@ class Message(Base):
     id = Column(Integer, primary_key=True, index=True)
     sender = Column(String(50), index=True, nullable=False)
     recipient = Column(String(50), index=True, nullable=False)
-    ciphertext = Column(Text, nullable=False)      # Зашифрованное сообщение
-    nonce = Column(Text, nullable=False)           # Nonce для AES
-    tag = Column(Text, nullable=False)             # Тег аутентификации GCM
-    encrypted_key = Column(Text, nullable=False)   # Зашифрованный RSA ключ
+    ciphertext = Column(Text, nullable=False)
+    nonce = Column(Text, nullable=False)
+    tag = Column(Text, nullable=False)
+    encrypted_key = Column(Text, nullable=False)
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
-    delivered = Column(Integer, default=0)          # 0 - не доставлено, 1 - доставлено
-
-# Настройки базы данных
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost/messenger")
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-def init_db():
-    """Создает таблицы при первом запуске"""
-    Base.metadata.create_all(bind=engine)
-
-def get_db():
-    """Генератор сессий БД для FastAPI"""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    delivered = Column(Integer, default=0)  # 0 - не доставлено, 1 - доставлено
