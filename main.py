@@ -2,7 +2,6 @@ from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List, Dict
-from fastapi.concurrency import run_in_threadpool
 import json
 import datetime
 import asyncio
@@ -63,15 +62,12 @@ class MessageSend(BaseModel):
 @app.post("/register")
 def register(user: UserCreate, db: Session = Depends(get_db)):
     """Регистрация нового пользователя"""
-    # Проверяем, существует ли уже такой пользователь
     db_user = db.query(User).filter(User.username == user.username).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Username already registered")
     
-    # Хешируем пароль
     hashed_password = hash_password(user.password)
     
-    # Создаем нового пользователя
     new_user = User(
         username=user.username,
         password_hash=hashed_password,
@@ -91,11 +87,9 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
     if not db_user:
         raise HTTPException(status_code=400, detail="User not found")
     
-    # Проверяем пароль
     if not verify_password(user.password, db_user.password_hash):
         raise HTTPException(status_code=400, detail="Invalid password")
     
-    # Обновляем время последнего визита
     db_user.last_seen = datetime.datetime.utcnow()
     db.commit()
     
@@ -119,17 +113,11 @@ def get_user(username: str, db: Session = Depends(get_db)):
 
 @app.post("/messages")
 async def send_message(message: MessageSend, sender: str, db: Session = Depends(get_db)):
-    """
-    Отправка сообщения (асинхронная версия)
-    """
-    # Проверяем существование получателя в отдельном потоке, чтобы не блокировать
-    recipient = await run_in_threadpool(
-        lambda: db.query(User).filter(User.username == message.recipient).first()
-    )
+    """Отправка сообщения (асинхронная версия)"""
+    recipient = db.query(User).filter(User.username == message.recipient).first()
     if not recipient:
         raise HTTPException(status_code=404, detail="Recipient not found")
     
-    # Сохраняем сообщение
     db_message = Message(
         sender=sender,
         recipient=message.recipient,
@@ -140,8 +128,7 @@ async def send_message(message: MessageSend, sender: str, db: Session = Depends(
     )
     
     db.add(db_message)
-    await run_in_threadpool(db.commit)
-    await run_in_threadpool(db.refresh, db_message)
+    db.commit()
     
     # Если получатель онлайн, отправляем уведомление
     if message.recipient in active_connections:
@@ -175,12 +162,32 @@ def get_undelivered_messages(username: str, db: Session = Depends(get_db)):
             "encrypted_key": msg.encrypted_key,
             "timestamp": str(msg.timestamp)
         })
-        # Помечаем как доставленные
         msg.delivered = 1
     
     db.commit()
     
     return {"messages": result}
+
+@app.get("/messages/history/{username}")
+def get_message_history(username: str, db: Session = Depends(get_db)):
+    """Получает ВСЕ сообщения для пользователя (не только недоставленные)"""
+    messages = db.query(Message).filter(
+        Message.recipient == username
+    ).order_by(Message.timestamp.desc()).limit(100).all()
+    
+    result = []
+    for msg in messages:
+        result.append({
+            "id": msg.id,
+            "sender": msg.sender,
+            "ciphertext": msg.ciphertext,
+            "nonce": msg.nonce,
+            "tag": msg.tag,
+            "encrypted_key": msg.encrypted_key,
+            "timestamp": str(msg.timestamp)
+        })
+    
+    return {"messages": list(reversed(result))}
 
 # ---- WebSocket для реального времени ----
 active_connections: Dict[str, WebSocket] = {}
@@ -188,19 +195,15 @@ active_connections: Dict[str, WebSocket] = {}
 @app.websocket("/ws/{username}")
 async def websocket_endpoint(websocket: WebSocket, username: str):
     await websocket.accept()
-    
-    # Сохраняем соединение
     active_connections[username] = websocket
     
     try:
         while True:
-            # Ждем сообщения от клиента (heartbeat)
             data = await websocket.receive_text()
             if data == "ping":
                 await websocket.send_text("pong")
     
     except WebSocketDisconnect:
-        # При отключении удаляем из активных соединений
         if username in active_connections:
             del active_connections[username]
     except Exception as e:
