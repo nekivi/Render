@@ -8,11 +8,12 @@ import asyncio
 import bcrypt
 from pydantic import BaseModel
 
-from models import get_db, init_db, User, Message
+from database import get_db, init_db
+from models import User, Message
 
 app = FastAPI()
 
-# Разрешаем CORS для любого происхождения
+# Разрешаем CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -56,10 +57,6 @@ class MessageSend(BaseModel):
     nonce: str
     tag: str
     encrypted_key: str
-
-class UserResponse(BaseModel):
-    username: str
-    public_key: str
 
 # ---- HTTP API ----
 @app.post("/register")
@@ -107,7 +104,7 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
         "public_key": db_user.public_key
     }
 
-@app.get("/users/{username}", response_model=UserResponse)
+@app.get("/users/{username}")
 def get_user(username: str, db: Session = Depends(get_db)):
     """Получить публичный ключ пользователя"""
     db_user = db.query(User).filter(User.username == username).first()
@@ -130,7 +127,7 @@ def send_message(message: MessageSend, sender: str, db: Session = Depends(get_db
     if not recipient:
         raise HTTPException(status_code=404, detail="Recipient not found")
     
-    # Сохраняем сообщение со всеми полями шифрования
+    # Сохраняем сообщение
     db_message = Message(
         sender=sender,
         recipient=message.recipient,
@@ -142,16 +139,13 @@ def send_message(message: MessageSend, sender: str, db: Session = Depends(get_db
     
     db.add(db_message)
     db.commit()
-    db.refresh(db_message)
     
-    # Если получатель онлайн (есть WebSocket соединение), пытаемся отправить сразу
+    # Если получатель онлайн, пытаемся отправить уведомление
     if message.recipient in active_connections:
-        # Отправляем уведомление о новом сообщении
         asyncio.create_task(
             active_connections[message.recipient].send_json({
                 "type": "new_message",
                 "sender": sender,
-                "message_id": db_message.id,
                 "timestamp": str(db_message.timestamp)
             })
         )
@@ -164,7 +158,7 @@ def get_undelivered_messages(username: str, db: Session = Depends(get_db)):
     messages = db.query(Message).filter(
         Message.recipient == username,
         Message.delivered == 0
-    ).order_by(Message.timestamp).all()
+    ).all()
     
     result = []
     for msg in messages:
@@ -193,7 +187,6 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
     
     # Сохраняем соединение
     active_connections[username] = websocket
-    print(f"WebSocket connected: {username}")
     
     try:
         while True:
@@ -206,27 +199,3 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
         # При отключении удаляем из активных соединений
         if username in active_connections:
             del active_connections[username]
-            print(f"WebSocket disconnected: {username}")
-    except Exception as e:
-        print(f"WebSocket error for {username}: {e}")
-        if username in active_connections:
-            del active_connections[username]
-
-# ---- Информационный эндпоинт ----
-@app.get("/")
-def root():
-    return {
-        "name": "Secure Messenger API",
-        "version": "1.0",
-        "status": "running",
-        "endpoints": [
-            "/register - POST",
-            "/login - POST",
-            "/users/{username} - GET",
-            "/messages - POST (with ?sender=username)",
-            "/messages/{username} - GET",
-            "/ws/{username} - WebSocket"
-        ]
-    }
-
-# Для запуска: uvicorn main:app --reload
