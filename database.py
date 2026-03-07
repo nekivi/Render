@@ -3,7 +3,6 @@ from sqlalchemy.orm import sessionmaker
 from models import Base
 import os
 
-# URL базы данных будет браться из переменных окружения на Render
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost/messenger")
 
 engine = create_engine(DATABASE_URL)
