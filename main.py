@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List, Dict
 import json
 import datetime
+import asyncio  # <-- Этого импорта не хватало
 
 from database import get_db, init_db
 from models import User, Message
@@ -43,21 +44,21 @@ class MessageSend(BaseModel):
     recipient: str
     ciphertext: str
     nonce: str
+    tag: str  # Добавляем tag
+    encrypted_key: str  # Добавляем encrypted_key
 
-# ---- HTTP API (регистрация, логин, отправка) ----
+# ---- HTTP API ----
 
 @app.post("/register")
 def register(user: UserCreate, db: Session = Depends(get_db)):
     """Регистрация нового пользователя"""
-    # Проверяем, существует ли уже такой пользователь
     db_user = db.query(User).filter(User.username == user.username).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Username already registered")
     
-    # Хешируем пароль
-    hashed_password = pwd_context.hash(user.password)
+    # Используем bcrypt напрямую
+    hashed_password = hash_password(user.password)
     
-    # Создаем нового пользователя
     new_user = User(
         username=user.username,
         password_hash=hashed_password,
@@ -77,11 +78,9 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
     if not db_user:
         raise HTTPException(status_code=400, detail="User not found")
     
-    # Проверяем пароль
-    if not pwd_context.verify(user.password, db_user.password_hash):
+    if not verify_password(user.password, db_user.password_hash):
         raise HTTPException(status_code=400, detail="Invalid password")
     
-    # Обновляем время последнего визита
     db_user.last_seen = datetime.datetime.utcnow()
     db.commit()
     
@@ -104,34 +103,36 @@ def get_user(username: str, db: Session = Depends(get_db)):
     }
 
 @app.post("/messages")
-def send_message(message: MessageSend, username: str, db: Session = Depends(get_db)):
+def send_message(message: MessageSend, sender: str, db: Session = Depends(get_db)):
     """
     Отправка сообщения.
-    username - кто отправляет (берется из заголовка, но для простоты передадим как параметр)
+    sender - кто отправляет (берется из query параметра)
     """
     # Проверяем, существует ли получатель
     recipient = db.query(User).filter(User.username == message.recipient).first()
     if not recipient:
         raise HTTPException(status_code=404, detail="Recipient not found")
     
-    # Сохраняем сообщение
+    # Сохраняем сообщение со всеми полями
     db_message = Message(
-        sender=username,
+        sender=sender,
         recipient=message.recipient,
         ciphertext=message.ciphertext,
-        nonce=message.nonce
+        nonce=message.nonce,
+        # Добавляем новые поля в модель Message (нужно обновить models.py)
+        tag=message.tag,
+        encrypted_key=message.encrypted_key
     )
     
     db.add(db_message)
     db.commit()
     
-    # Если получатель онлайн (есть WebSocket соединение), пытаемся отправить сразу
+    # Если получатель онлайн, уведомляем
     if message.recipient in active_connections:
-        # Отправляем уведомление о новом сообщении
         asyncio.create_task(
             active_connections[message.recipient].send_json({
                 "type": "new_message",
-                "sender": username,
+                "sender": sender,
                 "timestamp": str(db_message.timestamp)
             })
         )
@@ -153,9 +154,10 @@ def get_undelivered_messages(username: str, db: Session = Depends(get_db)):
             "sender": msg.sender,
             "ciphertext": msg.ciphertext,
             "nonce": msg.nonce,
+            "tag": msg.tag,  # Добавляем tag
+            "encrypted_key": msg.encrypted_key,  # Добавляем encrypted_key
             "timestamp": str(msg.timestamp)
         })
-        # Помечаем как доставленные
         msg.delivered = 1
     
     db.commit()
@@ -184,5 +186,3 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
         # При отключении удаляем из активных соединений
         if username in active_connections:
             del active_connections[username]
-
-# Для запуска: uvicorn main:app --reload
