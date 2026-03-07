@@ -10,8 +10,8 @@ class User(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(50), unique=True, index=True, nullable=False)
-    password_hash = Column(String(200), nullable=False)  # Хеш пароля
-    public_key = Column(Text, nullable=False)  # RSA публичный ключ (в формате PEM)
+    password_hash = Column(String(200), nullable=False)
+    public_key = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     last_seen = Column(DateTime, default=datetime.datetime.utcnow)
 
@@ -21,7 +21,9 @@ class Message(Base):
     id = Column(Integer, primary_key=True, index=True)
     sender = Column(String(50), index=True, nullable=False)
     recipient = Column(String(50), index=True, nullable=False)
-    ciphertext = Column(Text, nullable=False)  # Зашифрованное сообщение в base64
-    nonce = Column(Text, nullable=False)  # Nonce для AES (тоже base64)
+    ciphertext = Column(Text, nullable=False)
+    nonce = Column(Text, nullable=False)
+    tag = Column(Text, nullable=False)  # Новое поле
+    encrypted_key = Column(Text, nullable=False)  # Новое поле
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
-    delivered = Column(Integer, default=0)  # 0 - не доставлено, 1 - доставлено
+    delivered = Column(Integer, default=0)
