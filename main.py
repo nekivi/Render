@@ -140,15 +140,41 @@ def send_message(message: MessageSend, sender: str, db: Session = Depends(get_db
     db.add(db_message)
     db.commit()
     
-    # Если получатель онлайн, пытаемся отправить уведомление
     if message.recipient in active_connections:
-        asyncio.create_task(
+    try:
+        # Получаем event loop или создаем новый
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Если цикл уже запущен, создаем задачу
+            asyncio.create_task(
+                active_connections[message.recipient].send_json({
+                    "type": "new_message",
+                    "sender": sender,
+                    "timestamp": str(db_message.timestamp)
+                })
+            )
+        else:
+            # Если цикла нет, запускаем корутину напрямую
+            loop.run_until_complete(
+                active_connections[message.recipient].send_json({
+                    "type": "new_message",
+                    "sender": sender,
+                    "timestamp": str(db_message.timestamp)
+                })
+            )
+    except RuntimeError:
+        # Если нет event loop, создаем новый и используем его
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(
             active_connections[message.recipient].send_json({
                 "type": "new_message",
                 "sender": sender,
                 "timestamp": str(db_message.timestamp)
             })
         )
+    except Exception as e:
+        print(f"Error sending websocket notification: {e}")
     
     return {"status": "ok", "message_id": db_message.id}
 
