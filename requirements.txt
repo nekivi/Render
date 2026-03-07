@@ -4,6 +4,5 @@ websockets==15.0
 sqlalchemy==2.0.40
 psycopg2-binary==2.9.10
 python-jose[cryptography]==3.4.0
-passlib[bcrypt]==1.7.4
 python-multipart==0.0.20
-bcrypt==4.2.1  # Явно указываем совместимую версию bcrypt
+bcrypt==4.2.1
