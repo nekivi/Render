@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List, Dict
+from fastapi.concurrency import run_in_threadpool
 import json
 import datetime
 import asyncio
@@ -117,13 +118,14 @@ def get_user(username: str, db: Session = Depends(get_db)):
     }
 
 @app.post("/messages")
-def send_message(message: MessageSend, sender: str, db: Session = Depends(get_db)):
+async def send_message(message: MessageSend, sender: str, db: Session = Depends(get_db)):
     """
-    Отправка сообщения.
-    sender - кто отправляет (берется из query параметра)
+    Отправка сообщения (асинхронная версия)
     """
-    # Проверяем, существует ли получатель
-    recipient = db.query(User).filter(User.username == message.recipient).first()
+    # Проверяем существование получателя в отдельном потоке, чтобы не блокировать
+    recipient = await run_in_threadpool(
+        lambda: db.query(User).filter(User.username == message.recipient).first()
+    )
     if not recipient:
         raise HTTPException(status_code=404, detail="Recipient not found")
     
@@ -138,43 +140,19 @@ def send_message(message: MessageSend, sender: str, db: Session = Depends(get_db
     )
     
     db.add(db_message)
-    db.commit()
+    await run_in_threadpool(db.commit)
+    await run_in_threadpool(db.refresh, db_message)
     
+    # Если получатель онлайн, отправляем уведомление
     if message.recipient in active_connections:
-    try:
-        # Получаем event loop или создаем новый
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # Если цикл уже запущен, создаем задачу
-            asyncio.create_task(
-                active_connections[message.recipient].send_json({
-                    "type": "new_message",
-                    "sender": sender,
-                    "timestamp": str(db_message.timestamp)
-                })
-            )
-        else:
-            # Если цикла нет, запускаем корутину напрямую
-            loop.run_until_complete(
-                active_connections[message.recipient].send_json({
-                    "type": "new_message",
-                    "sender": sender,
-                    "timestamp": str(db_message.timestamp)
-                })
-            )
-    except RuntimeError:
-        # Если нет event loop, создаем новый и используем его
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(
-            active_connections[message.recipient].send_json({
+        try:
+            await active_connections[message.recipient].send_json({
                 "type": "new_message",
                 "sender": sender,
                 "timestamp": str(db_message.timestamp)
             })
-        )
-    except Exception as e:
-        print(f"Error sending websocket notification: {e}")
+        except Exception as e:
+            print(f"Error sending websocket notification: {e}")
     
     return {"status": "ok", "message_id": db_message.id}
 
@@ -223,5 +201,9 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
     
     except WebSocketDisconnect:
         # При отключении удаляем из активных соединений
+        if username in active_connections:
+            del active_connections[username]
+    except Exception as e:
+        print(f"WebSocket error for {username}: {e}")
         if username in active_connections:
             del active_connections[username]
