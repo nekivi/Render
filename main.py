@@ -10,7 +10,7 @@ import uuid
 from pydantic import BaseModel
 
 from database import get_db, init_db
-from models import User, Message, Group, GroupMember, GroupMessage, GroupKey
+from models import User, Message, Group, GroupMember, GroupMessage, GroupKey, GroupMessageDelivery
 
 app = FastAPI()
 
@@ -208,15 +208,13 @@ def get_message_history(username: str, db: Session = Depends(get_db)):
 @app.post("/groups/create")
 def create_group(group: GroupCreate, creator: str, db: Session = Depends(get_db)):
     """Создание новой группы"""
-    # Создаем группу с автоматической генерацией group_id
     db_group = Group(
         name=group.name,
         creator=creator
     )
     db.add(db_group)
-    db.flush()  # Чтобы получить group_id
+    db.flush()
     
-    # Добавляем создателя как админа
     db_member = GroupMember(
         group_id=db_group.group_id,
         username=creator,
@@ -235,17 +233,14 @@ def create_group(group: GroupCreate, creator: str, db: Session = Depends(get_db)
 @app.post("/groups/{group_id}/add_member")
 def add_member(group_id: str, username: str, db: Session = Depends(get_db)):
     """Добавление участника в группу"""
-    # Проверяем существование группы
     group = db.query(Group).filter(Group.group_id == group_id).first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
     
-    # Проверяем, существует ли пользователь
     user = db.query(User).filter(User.username == username).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Проверяем, не участник ли уже
     existing = db.query(GroupMember).filter(
         GroupMember.group_id == group_id,
         GroupMember.username == username
@@ -254,7 +249,6 @@ def add_member(group_id: str, username: str, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Already a member")
     
-    # Добавляем участника
     db_member = GroupMember(
         group_id=group_id,
         username=username,
@@ -268,7 +262,6 @@ def add_member(group_id: str, username: str, db: Session = Depends(get_db)):
 @app.post("/groups/{group_id}/remove_member")
 def remove_member(group_id: str, username: str, requester: str, db: Session = Depends(get_db)):
     """Удаление участника из группы"""
-    # Проверяем права (только админ может удалять)
     requester_member = db.query(GroupMember).filter(
         GroupMember.group_id == group_id,
         GroupMember.username == requester
@@ -277,12 +270,10 @@ def remove_member(group_id: str, username: str, requester: str, db: Session = De
     if not requester_member or requester_member.role != "admin":
         raise HTTPException(status_code=403, detail="Only admins can remove members")
     
-    # Нельзя удалить создателя
     group = db.query(Group).filter(Group.group_id == group_id).first()
     if group.creator == username:
         raise HTTPException(status_code=400, detail="Cannot remove group creator")
     
-    # Удаляем участника
     db.query(GroupMember).filter(
         GroupMember.group_id == group_id,
         GroupMember.username == username
@@ -342,22 +333,18 @@ def save_group_key(key_data: GroupKeySend, db: Session = Depends(get_db)):
     """Сохраняет зашифрованный ключ группы для пользователя"""
     print(f"Saving group key for group {key_data.group_id}, user {key_data.username}")
     
-    # Проверяем, существует ли группа
     group = db.query(Group).filter(Group.group_id == key_data.group_id).first()
     if not group:
         print(f"Group {key_data.group_id} not found")
         raise HTTPException(status_code=404, detail="Group not found")
     
-    # Проверяем, является ли пользователь участником
     member = db.query(GroupMember).filter(
         GroupMember.group_id == key_data.group_id,
         GroupMember.username == key_data.username
     ).first()
     
     if not member:
-        print(f"User {key_data.username} is not a member of group {key_data.group_id}")
-        # Если не участник, но ключ приходит - возможно, это новый участник
-        # Добавляем его
+        print(f"User {key_data.username} is not a member of group {key_data.group_id}, adding...")
         new_member = GroupMember(
             group_id=key_data.group_id,
             username=key_data.username,
@@ -367,7 +354,6 @@ def save_group_key(key_data: GroupKeySend, db: Session = Depends(get_db)):
         db.flush()
         print(f"Added {key_data.username} to group as member")
     
-    # Сохраняем или обновляем ключ
     existing_key = db.query(GroupKey).filter(
         GroupKey.group_id == key_data.group_id,
         GroupKey.username == key_data.username
@@ -411,7 +397,6 @@ def get_group_key(group_id: str, username: str, db: Session = Depends(get_db)):
 @app.post("/groups/message")
 async def send_group_message(message: GroupMessageSend, sender: str, db: Session = Depends(get_db)):
     """Отправка сообщения в группу"""
-    # Проверяем, является ли отправитель участником группы
     member = db.query(GroupMember).filter(
         GroupMember.group_id == message.group_id,
         GroupMember.username == sender
@@ -430,12 +415,28 @@ async def send_group_message(message: GroupMessageSend, sender: str, db: Session
         encrypted_key=message.encrypted_key
     )
     db.add(db_message)
-    db.commit()
+    db.flush()  # Получаем ID сообщения
     
     # Получаем всех участников группы
     members = db.query(GroupMember).filter(
         GroupMember.group_id == message.group_id
     ).all()
+    
+    # Создаём записи о доставке для всех, кроме отправителя
+    delivery_count = 0
+    for member in members:
+        if member.username != sender:
+            delivery = GroupMessageDelivery(
+                message_id=db_message.id,
+                group_id=message.group_id,
+                username=member.username,
+                delivered=0
+            )
+            db.add(delivery)
+            delivery_count += 1
+    
+    db.commit()
+    print(f"Message {db_message.id} saved, created {delivery_count} delivery records")
     
     # Уведомляем всех участников онлайн
     for member in members:
@@ -455,7 +456,6 @@ async def send_group_message(message: GroupMessageSend, sender: str, db: Session
 @app.get("/groups/messages/{group_id}/{username}")
 def get_undelivered_group_messages(group_id: str, username: str, db: Session = Depends(get_db)):
     """Получает все недоставленные сообщения для группы"""
-    # Проверяем, является ли пользователь участником
     member = db.query(GroupMember).filter(
         GroupMember.group_id == group_id,
         GroupMember.username == username
@@ -464,10 +464,21 @@ def get_undelivered_group_messages(group_id: str, username: str, db: Session = D
     if not member:
         raise HTTPException(status_code=403, detail="Not a member of this group")
     
+    # Находим все сообщения группы, для которых нет доставленной записи для этого пользователя
+    # Получаем ID сообщений, которые уже доставлены этому пользователю
+    delivered_subquery = db.query(GroupMessageDelivery.message_id).filter(
+        GroupMessageDelivery.group_id == group_id,
+        GroupMessageDelivery.username == username,
+        GroupMessageDelivery.delivered == 1
+    ).subquery()
+    
+    # Получаем недоставленные сообщения
     messages = db.query(GroupMessage).filter(
         GroupMessage.group_id == group_id,
-        GroupMessage.delivered == 0
-    ).all()
+        GroupMessage.id.notin_(delivered_subquery)
+    ).order_by(GroupMessage.timestamp).all()
+    
+    print(f"Found {len(messages)} undelivered messages for user {username} in group {group_id}")
     
     result = []
     for msg in messages:
@@ -481,7 +492,26 @@ def get_undelivered_group_messages(group_id: str, username: str, db: Session = D
             "encrypted_key": msg.encrypted_key,
             "timestamp": str(msg.timestamp)
         })
-        msg.delivered = 1
+        
+        # Помечаем как доставленное для этого пользователя
+        # Проверяем, есть ли уже запись
+        existing = db.query(GroupMessageDelivery).filter(
+            GroupMessageDelivery.message_id == msg.id,
+            GroupMessageDelivery.username == username
+        ).first()
+        
+        if existing:
+            existing.delivered = 1
+            existing.delivered_at = datetime.datetime.utcnow()
+        else:
+            delivery = GroupMessageDelivery(
+                message_id=msg.id,
+                group_id=group_id,
+                username=username,
+                delivered=1,
+                delivered_at=datetime.datetime.utcnow()
+            )
+            db.add(delivery)
     
     db.commit()
     
@@ -490,7 +520,6 @@ def get_undelivered_group_messages(group_id: str, username: str, db: Session = D
 @app.get("/groups/messages/history/{group_id}/{username}")
 def get_group_message_history(group_id: str, username: str, db: Session = Depends(get_db)):
     """Получает историю сообщений группы"""
-    # Проверяем, является ли пользователь участником
     member = db.query(GroupMember).filter(
         GroupMember.group_id == group_id,
         GroupMember.username == username
@@ -525,6 +554,7 @@ active_connections: Dict[str, WebSocket] = {}
 async def websocket_endpoint(websocket: WebSocket, username: str):
     await websocket.accept()
     active_connections[username] = websocket
+    print(f"WebSocket connected: {username}")
     
     try:
         while True:
@@ -535,6 +565,7 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
     except WebSocketDisconnect:
         if username in active_connections:
             del active_connections[username]
+        print(f"WebSocket disconnected: {username}")
     except Exception as e:
         print(f"WebSocket error for {username}: {e}")
         if username in active_connections:
