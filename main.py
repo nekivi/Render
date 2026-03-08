@@ -547,6 +547,68 @@ def get_group_message_history(group_id: str, username: str, db: Session = Depend
     
     return {"messages": list(reversed(result))}
 
+@app.get("/groups/messages/all/{username}")
+def get_all_undelivered_group_messages(username: str, db: Session = Depends(get_db)):
+    """Получает все недоставленные сообщения для всех групп пользователя одним запросом"""
+    # Получаем все группы пользователя
+    memberships = db.query(GroupMember).filter(GroupMember.username == username).all()
+    group_ids = [m.group_id for m in memberships]
+    
+    if not group_ids:
+        return {"messages": {}}
+    
+    # Получаем ID сообщений, которые уже доставлены пользователю
+    delivered_subquery = db.query(GroupMessageDelivery.message_id).filter(
+        GroupMessageDelivery.username == username,
+        GroupMessageDelivery.delivered == 1
+    ).subquery()
+    
+    # Получаем все недоставленные сообщения для всех групп
+    messages = db.query(GroupMessage).filter(
+        GroupMessage.group_id.in_(group_ids),
+        GroupMessage.id.notin_(delivered_subquery)
+    ).order_by(GroupMessage.timestamp).all()
+    
+    # Группируем по group_id
+    result = {}
+    for msg in messages:
+        if msg.group_id not in result:
+            result[msg.group_id] = []
+        
+        result[msg.group_id].append({
+            "id": msg.id,
+            "group_id": msg.group_id,
+            "sender": msg.sender,
+            "ciphertext": msg.ciphertext,
+            "nonce": msg.nonce,
+            "tag": msg.tag,
+            "encrypted_key": msg.encrypted_key,
+            "timestamp": str(msg.timestamp)
+        })
+        
+        # Помечаем как доставленное
+        existing = db.query(GroupMessageDelivery).filter(
+            GroupMessageDelivery.message_id == msg.id,
+            GroupMessageDelivery.username == username
+        ).first()
+        
+        if existing:
+            existing.delivered = 1
+            existing.delivered_at = datetime.datetime.utcnow()
+        else:
+            delivery = GroupMessageDelivery(
+                message_id=msg.id,
+                group_id=msg.group_id,
+                username=username,
+                delivered=1,
+                delivered_at=datetime.datetime.utcnow()
+            )
+            db.add(delivery)
+    
+    db.commit()
+    return {"messages": result}
+
+
 # ---- WebSocket для реального времени ----
 active_connections: Dict[str, WebSocket] = {}
 
