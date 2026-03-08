@@ -66,7 +66,18 @@ class GroupMessage(Base):
     tag = Column(Text, nullable=False)
     encrypted_key = Column(Text, nullable=False)  # Для групповых сообщений это маркер
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+
+class GroupMessageDelivery(Base):
+    __tablename__ = "group_message_delivery"
+    
+    id = Column(Integer, primary_key=True)
+    message_id = Column(Integer, index=True, nullable=False)  # ID из group_messages
+    group_id = Column(String(50), index=True, nullable=False)
+    username = Column(String(50), index=True, nullable=False)
     delivered = Column(Integer, default=0)  # 0 - не доставлено, 1 - доставлено
+    delivered_at = Column(DateTime, nullable=True)
+    
+    __table_args__ = (UniqueConstraint('message_id', 'username', name='unique_message_user'),)
 
 class GroupKey(Base):
     __tablename__ = "group_keys"
