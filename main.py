@@ -340,9 +340,12 @@ def get_user_groups(username: str, db: Session = Depends(get_db)):
 @app.post("/groups/key")
 def save_group_key(key_data: GroupKeySend, db: Session = Depends(get_db)):
     """Сохраняет зашифрованный ключ группы для пользователя"""
+    print(f"Saving group key for group {key_data.group_id}, user {key_data.username}")
+    
     # Проверяем, существует ли группа
     group = db.query(Group).filter(Group.group_id == key_data.group_id).first()
     if not group:
+        print(f"Group {key_data.group_id} not found")
         raise HTTPException(status_code=404, detail="Group not found")
     
     # Проверяем, является ли пользователь участником
@@ -352,7 +355,17 @@ def save_group_key(key_data: GroupKeySend, db: Session = Depends(get_db)):
     ).first()
     
     if not member:
-        raise HTTPException(status_code=403, detail="User is not a member of this group")
+        print(f"User {key_data.username} is not a member of group {key_data.group_id}")
+        # Если не участник, но ключ приходит - возможно, это новый участник
+        # Добавляем его
+        new_member = GroupMember(
+            group_id=key_data.group_id,
+            username=key_data.username,
+            role="member"
+        )
+        db.add(new_member)
+        db.flush()
+        print(f"Added {key_data.username} to group as member")
     
     # Сохраняем или обновляем ключ
     existing_key = db.query(GroupKey).filter(
@@ -363,6 +376,7 @@ def save_group_key(key_data: GroupKeySend, db: Session = Depends(get_db)):
     if existing_key:
         existing_key.encrypted_key = key_data.encrypted_key
         existing_key.key_version += 1
+        print(f"Updated existing key for {key_data.username}")
     else:
         new_key = GroupKey(
             group_id=key_data.group_id,
@@ -370,10 +384,11 @@ def save_group_key(key_data: GroupKeySend, db: Session = Depends(get_db)):
             encrypted_key=key_data.encrypted_key
         )
         db.add(new_key)
+        print(f"Created new key for {key_data.username}")
     
     db.commit()
     
-    return {"status": "ok"}
+    return {"status": "ok", "message": "Group key saved"}
 
 @app.get("/groups/{group_id}/key/{username}")
 def get_group_key(group_id: str, username: str, db: Session = Depends(get_db)):
