@@ -466,6 +466,8 @@ async def send_group_message(message: GroupMessageSend, sender: str, db: Session
 @app.get("/groups/messages/{group_id}/{username}")
 def get_undelivered_group_messages(group_id: str, username: str, db: Session = Depends(get_db)):
     """Получает все недоставленные сообщения для группы"""
+    print(f"Getting messages for user {username} in group {group_id}")
+    
     member = db.query(GroupMember).filter(
         GroupMember.group_id == group_id,
         GroupMember.username == username
@@ -474,8 +476,7 @@ def get_undelivered_group_messages(group_id: str, username: str, db: Session = D
     if not member:
         raise HTTPException(status_code=403, detail="Not a member of this group")
     
-    # Находим все сообщения группы, для которых нет доставленной записи для этого пользователя
-    # Получаем ID сообщений, которые уже доставлены этому пользователю
+    # Находим ID сообщений, которые уже доставлены этому пользователю
     delivered_subquery = db.query(GroupMessageDelivery.message_id).filter(
         GroupMessageDelivery.group_id == group_id,
         GroupMessageDelivery.username == username,
@@ -485,12 +486,14 @@ def get_undelivered_group_messages(group_id: str, username: str, db: Session = D
     # Получаем недоставленные сообщения
     messages = db.query(GroupMessage).filter(
         GroupMessage.group_id == group_id,
-        GroupMessage.id.notin_(delivered_subquery)
+        ~GroupMessage.id.in_(delivered_subquery)
     ).order_by(GroupMessage.timestamp).all()
     
-    print(f"Found {len(messages)} undelivered messages for user {username} in group {group_id}")
+    print(f"Found {len(messages)} undelivered messages for user {username}")
     
     result = []
+    message_ids = []  # Сохраняем ID для последующей пометки
+    
     for msg in messages:
         result.append({
             "id": msg.id,
@@ -502,11 +505,12 @@ def get_undelivered_group_messages(group_id: str, username: str, db: Session = D
             "encrypted_key": msg.encrypted_key,
             "timestamp": str(msg.timestamp)
         })
-        
-        # Помечаем как доставленное для этого пользователя
-        # Проверяем, есть ли уже запись
+        message_ids.append(msg.id)
+    
+    # Только после успешного формирования ответа помечаем как доставленные
+    for msg_id in message_ids:
         existing = db.query(GroupMessageDelivery).filter(
-            GroupMessageDelivery.message_id == msg.id,
+            GroupMessageDelivery.message_id == msg_id,
             GroupMessageDelivery.username == username
         ).first()
         
@@ -515,7 +519,7 @@ def get_undelivered_group_messages(group_id: str, username: str, db: Session = D
             existing.delivered_at = datetime.datetime.utcnow()
         else:
             delivery = GroupMessageDelivery(
-                message_id=msg.id,
+                message_id=msg_id,
                 group_id=group_id,
                 username=username,
                 delivered=1,
@@ -524,6 +528,7 @@ def get_undelivered_group_messages(group_id: str, username: str, db: Session = D
             db.add(delivery)
     
     db.commit()
+    print(f"Marked {len(message_ids)} messages as delivered for {username}")
     
     return {"messages": result}
 
