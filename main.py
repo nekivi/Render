@@ -231,7 +231,7 @@ def create_group(group: GroupCreate, creator: str, db: Session = Depends(get_db)
     }
 
 @app.post("/groups/{group_id}/add_member")
-def add_member(group_id: str, username: str, db: Session = Depends(get_db)):
+async def add_member(group_id: str, username: str, db: Session = Depends(get_db)):
     """Добавление участника в группу"""
     group = db.query(Group).filter(Group.group_id == group_id).first()
     if not group:
@@ -256,14 +256,16 @@ def add_member(group_id: str, username: str, db: Session = Depends(get_db)):
     )
     db.add(db_member)
     db.commit()
+    
+    # Уведомляем нового участника
     if username in active_connections:
         try:
             await active_connections[username].send_json({
                 "type": "new_group",
                 "group_id": group_id
             })
-        except:
-            pass
+        except Exception as e:
+            print(f"Error sending notification to {username}: {e}")
     
     return {"status": "ok", "username": username}
 
