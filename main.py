@@ -560,11 +560,14 @@ def get_group_message_history(group_id: str, username: str, db: Session = Depend
 @app.get("/groups/messages/all/{username}")
 def get_all_undelivered_group_messages(username: str, db: Session = Depends(get_db)):
     """Получает все недоставленные сообщения для всех групп пользователя одним запросом"""
+    print(f"Getting all undelivered messages for user {username}")
+    
     # Получаем все группы пользователя
     memberships = db.query(GroupMember).filter(GroupMember.username == username).all()
     group_ids = [m.group_id for m in memberships]
     
     if not group_ids:
+        print(f"User {username} is not in any groups")
         return {"messages": {}}
     
     # Получаем ID сообщений, которые уже доставлены пользователю
@@ -578,6 +581,8 @@ def get_all_undelivered_group_messages(username: str, db: Session = Depends(get_
         GroupMessage.group_id.in_(group_ids),
         GroupMessage.id.notin_(delivered_subquery)
     ).order_by(GroupMessage.timestamp).all()
+    
+    print(f"Found {len(messages)} undelivered messages for user {username}")
     
     # Группируем по group_id
     result = {}
@@ -596,7 +601,7 @@ def get_all_undelivered_group_messages(username: str, db: Session = Depends(get_
             "timestamp": str(msg.timestamp)
         })
         
-        # Помечаем как доставленное
+        # Помечаем как доставленное для этого пользователя
         existing = db.query(GroupMessageDelivery).filter(
             GroupMessageDelivery.message_id == msg.id,
             GroupMessageDelivery.username == username
