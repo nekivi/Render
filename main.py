@@ -127,6 +127,110 @@ def get_user(username: str, db: Session = Depends(get_db)):
         "public_key": db_user.public_key
     }
 
+@app.post("/groups/{group_id}/leave")
+def leave_group(group_id: str, username: str, db: Session = Depends(get_db)):
+    """Покинуть группу"""
+    print(f"User {username} leaving group {group_id}")
+    
+    # Проверяем, существует ли группа
+    group = db.query(Group).filter(Group.group_id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    
+    # Проверяем, является ли пользователь участником
+    member = db.query(GroupMember).filter(
+        GroupMember.group_id == group_id,
+        GroupMember.username == username
+    ).first()
+    
+    if not member:
+        raise HTTPException(status_code=403, detail="Not a member of this group")
+    
+    # Если пользователь - создатель группы
+    if group.creator == username:
+        # Находим следующего админа или участника
+        next_member = db.query(GroupMember).filter(
+            GroupMember.group_id == group_id,
+            GroupMember.username != username
+        ).order_by(GroupMember.joined_at).first()
+        
+        if next_member:
+            # Передаем права создателя следующему участнику
+            group.creator = next_member.username
+            next_member.role = "admin"
+            print(f"Transferred creator role to {next_member.username}")
+        else:
+            # Если это был последний участник - удаляем группу
+            print(f"Last member leaving, deleting group {group_id}")
+            db.delete(group)
+            # Удаляем все связанные данные
+            db.query(GroupMember).filter(GroupMember.group_id == group_id).delete()
+            db.query(GroupMessage).filter(GroupMessage.group_id == group_id).delete()
+            db.query(GroupKey).filter(GroupKey.group_id == group_id).delete()
+            db.query(GroupMessageDelivery).filter(
+                GroupMessageDelivery.group_id == group_id
+            ).delete()
+            db.commit()
+            return {"status": "ok", "action": "group_deleted"}
+    
+    # Удаляем участника
+    db.delete(member)
+    
+    # Удаляем ключ группы для этого пользователя
+    db.query(GroupKey).filter(
+        GroupKey.group_id == group_id,
+        GroupKey.username == username
+    ).delete()
+    
+    db.commit()
+    
+    # Уведомляем остальных участников
+    members = db.query(GroupMember).filter(GroupMember.group_id == group_id).all()
+    for member in members:
+        if member.username in active_connections:
+            try:
+                asyncio.create_task(
+                    active_connections[member.username].send_json({
+                        "type": "member_left",
+                        "group_id": group_id,
+                        "username": username,
+                        "new_creator": group.creator if group.creator != username else None
+                    })
+                )
+            except:
+                pass
+    
+    return {"status": "ok", "action": "left"}
+
+@app.delete("/groups/{group_id}")
+def delete_group(group_id: str, username: str, db: Session = Depends(get_db)):
+    """Удалить группу (только для создателя)"""
+    print(f"User {username} deleting group {group_id}")
+    
+    group = db.query(Group).filter(Group.group_id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    
+    if group.creator != username:
+        raise HTTPException(status_code=403, detail="Only creator can delete group")
+    
+    # Удаляем все связанные данные
+    db.query(GroupMember).filter(GroupMember.group_id == group_id).delete()
+    db.query(GroupMessage).filter(GroupMessage.group_id == group_id).delete()
+    db.query(GroupKey).filter(GroupKey.group_id == group_id).delete()
+    db.query(GroupMessageDelivery).filter(
+        GroupMessageDelivery.group_id == group_id
+    ).delete()
+    db.delete(group)
+    
+    db.commit()
+    
+    # Уведомляем участников
+    # (их уже нет в БД, но можно попробовать уведомить через WebSocket)
+    
+    return {"status": "ok", "action": "deleted"}
+
+
 @app.post("/messages")
 async def send_message(message: MessageSend, sender: str, db: Session = Depends(get_db)):
     """Отправка личного сообщения"""
