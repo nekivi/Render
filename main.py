@@ -301,7 +301,7 @@ def get_undelivered_messages(username: str, db: Session = Depends(get_db)):
             "nonce": msg.nonce,
             "tag": msg.tag,
             "encrypted_key": msg.encrypted_key,
-            "timestamp": str(msg.timestamp)
+            "timestamp": msg.timestamp.isoformat() + "Z"
         })
         msg.delivered = 1
     
@@ -325,7 +325,7 @@ def get_message_history(username: str, db: Session = Depends(get_db)):
             "nonce": msg.nonce,
             "tag": msg.tag,
             "encrypted_key": msg.encrypted_key,
-            "timestamp": str(msg.timestamp)
+            "timestamp": msg.timestamp.isoformat() + "Z"
         })
     
     return {"messages": list(reversed(result))}
@@ -629,7 +629,7 @@ def get_undelivered_group_messages(group_id: str, username: str, db: Session = D
             "nonce": msg.nonce,
             "tag": msg.tag,
             "encrypted_key": msg.encrypted_key,
-            "timestamp": str(msg.timestamp)
+            "timestamp": msg.timestamp.isoformat() + "Z"
         })
         message_ids.append(msg.id)
     
@@ -683,7 +683,7 @@ def get_group_message_history(group_id: str, username: str, db: Session = Depend
             "nonce": msg.nonce,
             "tag": msg.tag,
             "encrypted_key": msg.encrypted_key,
-            "timestamp": str(msg.timestamp)
+            "timestamp": msg.timestamp.isoformat() + "Z"
         })
     
     return {"messages": list(reversed(result))}
@@ -731,7 +731,7 @@ def get_all_undelivered_group_messages(username: str, db: Session = Depends(get_
             "nonce": msg.nonce,
             "tag": msg.tag,
             "encrypted_key": msg.encrypted_key,
-            "timestamp": str(msg.timestamp)
+            "timestamp": msg.timestamp.isoformat() + "Z"
         })
         
         # Помечаем как доставленное для этого пользователя
