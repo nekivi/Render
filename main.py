@@ -256,6 +256,14 @@ def add_member(group_id: str, username: str, db: Session = Depends(get_db)):
     )
     db.add(db_member)
     db.commit()
+    if username in active_connections:
+        try:
+            await active_connections[username].send_json({
+                "type": "new_group",
+                "group_id": group_id
+            })
+        except:
+            pass
     
     return {"status": "ok", "username": username}
 
