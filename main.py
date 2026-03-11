@@ -10,7 +10,7 @@ import uuid
 from pydantic import BaseModel
 
 from database import get_db, init_db
-from models import User, Message, Group, GroupMember, GroupMessage, GroupKey, GroupMessageDelivery
+from models import User, Message, Group, GroupMember, GroupMessage, GroupKey, GroupMessageDelivery, Contact
 
 app = FastAPI()
 
