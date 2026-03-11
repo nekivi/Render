@@ -24,6 +24,7 @@ class Contact(Base):
     contact = Column(String(50), index=True, nullable=False)   # кого добавили
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     mutual = Column(Integer, default=0)  # 0 - односторонний, 1 - взаимный
+    deleted = Column(Integer, default=0)  # 0 - активен, 1 - удалён (мягкое удаление)
     
     __table_args__ = (UniqueConstraint('user', 'contact', name='unique_user_contact'),)
 
