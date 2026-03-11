@@ -23,6 +23,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.post("/contacts/delete")
+async def delete_contact(user: str, contact: str, db: Session = Depends(get_db)):
+    """Удаление контакта (мягкое удаление)"""
+    print(f"\n=== DELETE CONTACT ===")
+    print(f"User {user} deleting contact {contact}")
+    
+    # Находим запись
+    contact_record = db.query(Contact).filter(
+        Contact.user == user,
+        Contact.contact == contact
+    ).first()
+    
+    if contact_record:
+        # Помечаем как удалённый
+        contact_record.deleted = 1
+        print(f"Marked as deleted")
+    
+    # Также проверяем обратную запись (если она была взаимной)
+    reverse = db.query(Contact).filter(
+        Contact.user == contact,
+        Contact.contact == user
+    ).first()
+    
+    if reverse:
+        reverse.deleted = 1
+        print(f"Marked reverse as deleted")
+    
+    db.commit()
+    return {"status": "ok"}
+
 @app.on_event("startup")
 def startup():
     # Проверяем наличие колонки deleted в таблице contacts
