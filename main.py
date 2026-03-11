@@ -74,6 +74,74 @@ class GroupKeySend(BaseModel):
     username: str
     encrypted_key: str
 
+@app.post("/contacts/add")
+async def add_contact(user: str, contact: str, db: Session = Depends(get_db)):
+    print(f"\n=== ADD CONTACT ===")
+    print(f"User {user} adding contact {contact}")
+    
+    user_exists = db.query(User).filter(User.username == user).first()
+    contact_exists = db.query(User).filter(User.username == contact).first()
+    if not user_exists or not contact_exists:
+        print(f"User not found")
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Ищем существующую запись (включая удалённые)
+    existing = db.query(Contact).filter(
+        Contact.user == user,
+        Contact.contact == contact
+    ).first()
+    
+    if existing:
+        if existing.deleted:
+            # Если запись была удалена, просто восстанавливаем её
+            print(f"Restoring deleted contact")
+            existing.deleted = 0
+            existing.mutual = 0
+            db.add(existing)
+        else:
+            print(f"Contact already exists and active")
+            return {"status": "already_exists"}
+    else:
+        # Создаём новую запись
+        existing = Contact(user=user, contact=contact, mutual=0, deleted=0)
+        db.add(existing)
+    
+    # Проверяем обратную запись (взаимность)
+    reverse = db.query(Contact).filter(
+        Contact.user == contact,
+        Contact.contact == user
+    ).first()
+    
+    if reverse and not reverse.deleted:
+        print(f"Mutual contact detected!")
+        existing.mutual = 1
+        reverse.mutual = 1
+        db.add(reverse)
+        
+        # Уведомляем обоих
+        if user in active_connections:
+            await active_connections[user].send_json({
+                "type": "contact_mutual",
+                "contact": contact
+            })
+        if contact in active_connections:
+            await active_connections[contact].send_json({
+                "type": "contact_mutual",
+                "contact": user
+            })
+    else:
+        print(f"One-way contact, notifying {contact}")
+        if contact in active_connections:
+            await active_connections[contact].send_json({
+                "type": "new_contact",
+                "user": user,
+                "public_key": user_exists.public_key
+            })
+    
+    db.commit()
+    return {"status": "ok"}
+
+
 # ---- HTTP API для пользователей и сообщений ----
 @app.post("/register")
 def register(user: UserCreate, db: Session = Depends(get_db)):
@@ -275,10 +343,16 @@ async def add_contact(user: str, contact: str, db: Session = Depends(get_db)):
 
 @app.get("/contacts/{username}")
 def get_contacts(username: str, db: Session = Depends(get_db)):
-    """Получить список контактов пользователя (всех, кто его добавил и кого он добавил)"""
-    # Получаем все записи, где пользователь фигурирует либо как user, либо как contact
-    as_user = db.query(Contact).filter(Contact.user == username).all()
-    as_contact = db.query(Contact).filter(Contact.contact == username).all()
+    """Получить список активных контактов пользователя"""
+    # Получаем только активные записи (deleted=0)
+    as_user = db.query(Contact).filter(
+        Contact.user == username,
+        Contact.deleted == 0
+    ).all()
+    as_contact = db.query(Contact).filter(
+        Contact.contact == username,
+        Contact.deleted == 0
+    ).all()
     
     contacts = set()
     for c in as_user:
@@ -286,7 +360,6 @@ def get_contacts(username: str, db: Session = Depends(get_db)):
     for c in as_contact:
         contacts.add(c.user)
     
-    # Для каждого контакта получаем публичный ключ
     result = []
     for contact in contacts:
         user = db.query(User).filter(User.username == contact).first()
@@ -298,7 +371,6 @@ def get_contacts(username: str, db: Session = Depends(get_db)):
             })
     
     return {"contacts": result}
-
 
 
 @app.delete("/groups/{group_id}")
