@@ -26,6 +26,12 @@ app.add_middleware(
 # При запуске создаем таблицы
 @app.on_event("startup")
 def startup():
+    # Удаляем старую таблицу contacts и создаём новую
+    from sqlalchemy import inspect
+    inspector = inspect(engine)
+    if 'contacts' in inspector.get_table_names():
+        Contact.__table__.drop(engine)
+        print("Dropped old contacts table")
     init_db()
 
 # ---- Вспомогательные функции для паролей ----
