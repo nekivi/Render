@@ -8,6 +8,7 @@ import asyncio
 import bcrypt
 import uuid
 from pydantic import BaseModel
+from sqlalchemy import inspect
 
 from database import get_db, init_db
 from models import User, Message, Group, GroupMember, GroupMessage, GroupKey, GroupMessageDelivery, Contact
@@ -27,7 +28,6 @@ app.add_middleware(
 @app.on_event("startup")
 def startup():
     # Удаляем старую таблицу contacts и создаём новую
-    from sqlalchemy import inspect
     inspector = inspect(engine)
     if 'contacts' in inspector.get_table_names():
         Contact.__table__.drop(engine)
