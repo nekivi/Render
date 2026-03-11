@@ -16,6 +16,17 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     last_seen = Column(DateTime, default=datetime.datetime.utcnow)
 
+class Contact(Base):
+    __tablename__ = "contacts"
+    
+    id = Column(Integer, primary_key=True)
+    user = Column(String(50), index=True, nullable=False)      # кто добавил
+    contact = Column(String(50), index=True, nullable=False)   # кого добавили
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    mutual = Column(Integer, default=0)  # 0 - односторонний, 1 - взаимный
+    
+    __table_args__ = (UniqueConstraint('user', 'contact', name='unique_user_contact'),)
+
 class Message(Base):
     __tablename__ = "messages"
     
