@@ -8,9 +8,8 @@ import asyncio
 import bcrypt
 import uuid
 from pydantic import BaseModel
-from sqlalchemy import inspect
 
-from database import get_db, init_db
+from database import engine, get_db, init_db  # Добавлен импорт engine
 from models import User, Message, Group, GroupMember, GroupMessage, GroupKey, GroupMessageDelivery, Contact
 
 app = FastAPI()
@@ -24,16 +23,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# При запуске создаем таблицы
 @app.on_event("startup")
 def startup():
-    # Удаляем старую таблицу contacts и создаём новую
+    # Проверяем наличие колонки deleted в таблице contacts
+    from sqlalchemy import inspect, text
     inspector = inspect(engine)
     if 'contacts' in inspector.get_table_names():
-        Contact.__table__.drop(engine)
-        print("Dropped old contacts table")
+        columns = [col['name'] for col in inspector.get_columns('contacts')]
+        if 'deleted' not in columns:
+            # Добавляем колонку deleted
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE contacts ADD COLUMN deleted INTEGER DEFAULT 0"))
+                conn.commit()
+                print("Added 'deleted' column to contacts table")
     init_db()
-
 # ---- Вспомогательные функции для паролей ----
 def hash_password(password: str) -> str:
     """Хеширует пароль с помощью bcrypt"""
