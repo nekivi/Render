@@ -210,6 +210,92 @@ async def leave_group(group_id: str, username: str, db: Session = Depends(get_db
     
     return {"status": "ok", "action": "left", "remaining": remaining}
 
+
+@app.post("/contacts/add")
+async def add_contact(user: str, contact: str, db: Session = Depends(get_db)):
+    """Добавление контакта (одностороннее)"""
+    # Проверяем существование пользователей
+    user_exists = db.query(User).filter(User.username == user).first()
+    contact_exists = db.query(User).filter(User.username == contact).first()
+    if not user_exists or not contact_exists:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Проверяем, нет ли уже такой записи
+    existing = db.query(Contact).filter(
+        Contact.user == user,
+        Contact.contact == contact
+    ).first()
+    
+    if existing:
+        return {"status": "already_exists"}
+    
+    # Создаем запись
+    new_contact = Contact(user=user, contact=contact, mutual=0)
+    db.add(new_contact)
+    
+    # Проверяем, не добавил ли уже contact этого user (взаимность)
+    reverse = db.query(Contact).filter(
+        Contact.user == contact,
+        Contact.contact == user
+    ).first()
+    
+    if reverse:
+        # Если есть обратная запись, делаем обе взаимными
+        new_contact.mutual = 1
+        reverse.mutual = 1
+        db.add(reverse)
+        
+        # Уведомляем обоих о взаимном контакте
+        if user in active_connections:
+            await active_connections[user].send_json({
+                "type": "contact_mutual",
+                "contact": contact
+            })
+        if contact in active_connections:
+            await active_connections[contact].send_json({
+                "type": "contact_mutual",
+                "contact": user
+            })
+    else:
+        # Уведомляем только contact о том, что его добавили
+        if contact in active_connections:
+            await active_connections[contact].send_json({
+                "type": "new_contact",
+                "user": user,
+                "public_key": user_exists.public_key
+            })
+    
+    db.commit()
+    return {"status": "ok"}
+
+@app.get("/contacts/{username}")
+def get_contacts(username: str, db: Session = Depends(get_db)):
+    """Получить список контактов пользователя (всех, кто его добавил и кого он добавил)"""
+    # Получаем все записи, где пользователь фигурирует либо как user, либо как contact
+    as_user = db.query(Contact).filter(Contact.user == username).all()
+    as_contact = db.query(Contact).filter(Contact.contact == username).all()
+    
+    contacts = set()
+    for c in as_user:
+        contacts.add(c.contact)
+    for c in as_contact:
+        contacts.add(c.user)
+    
+    # Для каждого контакта получаем публичный ключ
+    result = []
+    for contact in contacts:
+        user = db.query(User).filter(User.username == contact).first()
+        if user:
+            result.append({
+                "username": contact,
+                "public_key": user.public_key,
+                "mutual": any(c.mutual for c in as_user if c.contact == contact) or any(c.mutual for c in as_contact if c.user == contact)
+            })
+    
+    return {"contacts": result}
+
+
+
 @app.delete("/groups/{group_id}")
 async def delete_group(group_id: str, username: str, db: Session = Depends(get_db)):
     """Удалить группу (только для создателя)"""
