@@ -1081,30 +1081,38 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
     await websocket.accept()
     active_connections[username] = websocket
     print(f"WebSocket connected: {username}")
-
+    
     try:
         while True:
-            message = await websocket.receive_text()
-            if message == "ping":
+            data = await websocket.receive_text()
+            try:
+                message = json.loads(data)
+            except:
+                continue
+            
+            # Обрабатываем ping
+            if data == "ping":
                 await websocket.send_text("pong")
                 continue
-
-            # Пытаемся распарсить как JSON
-            try:
-                data = json.loads(message)
-                msg_type = data.get("type")
-                target = data.get("target")
-
-                if msg_type and target and target in active_connections:
-                    # Пересылаем сообщение целевому пользователю
-                    await active_connections[target].send_text(message)
-                    print(f"Forwarded {msg_type} from {username} to {target}")
+            
+            # Пересылаем сообщения
+            if "target" in message:
+                target = message["target"]
+                # Для звонков добавляем отправителя
+                if message.get("type") in ["call_offer", "call_answer", "ice_candidate", "call_reject", "call_end"]:
+                    message["caller"] = username
+                if target in active_connections:
+                    await active_connections[target].send_json(message)
                 else:
-                    # Если нет целевого пользователя, возможно это broadcast или ошибка
-                    print(f"Received message from {username} with no target: {message[:100]}")
-            except json.JSONDecodeError:
-                # Не JSON, игнорируем
-                print(f"Received non-JSON message from {username}: {message[:100]}")
+                    # Если адресат не в сети, можно отправить ошибку отправителю
+                    await websocket.send_json({
+                        "type": "call_error",
+                        "message": "User is offline"
+                    })
+            else:
+                # Личные сообщения и группы обрабатываются через API, не через WebSocket
+                pass
+    
     except WebSocketDisconnect:
         print(f"WebSocket disconnected: {username}")
         if username in active_connections:
