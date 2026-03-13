@@ -1112,4 +1112,4 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
     except Exception as e:
         print(f"WebSocket error for {username}: {e}")
         if username in active_connections:
-            del active_connections[username]]
+            del active_connections[username]
