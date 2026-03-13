@@ -23,6 +23,95 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Хранилище активных звонков (можно в памяти)
+active_calls = {}  # call_id -> {'caller': user, 'callee': user, 'state': 'ringing'/'connected'}
+
+@app.websocket("/ws/call/{username}")
+async def websocket_call_endpoint(websocket: WebSocket, username: str):
+    await websocket.accept()
+    # Этот вебсокет будет использоваться только для сигналинга звонков
+    # Можно объединить с основным, но для простоты отделим
+    # TODO: добавить аутентификацию
+    call_connections[username] = websocket
+    try:
+        while True:
+            message = await websocket.receive_text()
+            data = json.loads(message)
+            # Обработка сигнальных сообщений
+            await handle_call_signal(username, data)
+    except WebSocketDisconnect:
+        if username in call_connections:
+            del call_connections[username]
+
+call_connections: Dict[str, WebSocket] = {}
+
+async def handle_call_signal(sender, data):
+    """Обрабатывает сигналы звонков"""
+    msg_type = data['type']
+    if msg_type == 'call_request':
+        # A звонит B
+        callee = data['callee']
+        call_id = str(uuid.uuid4())
+        active_calls[call_id] = {
+            'caller': sender,
+            'callee': callee,
+            'state': 'ringing'
+        }
+        # Уведомляем B
+        if callee in call_connections:
+            await call_connections[callee].send_json({
+                'type': 'incoming_call',
+                'call_id': call_id,
+                'caller': sender
+            })
+    elif msg_type == 'call_accept':
+        # B принимает звонок
+        call_id = data['call_id']
+        call = active_calls.get(call_id)
+        if call:
+            call['state'] = 'accepted'
+            # Уведомляем A
+            if call['caller'] in call_connections:
+                await call_connections[call['caller']].send_json({
+                    'type': 'call_accepted',
+                    'call_id': call_id,
+                    'callee': call['callee']
+                })
+    elif msg_type == 'call_reject':
+        # B отклоняет
+        call_id = data['call_id']
+        call = active_calls.get(call_id)
+        if call:
+            if call['caller'] in call_connections:
+                await call_connections[call['caller']].send_json({
+                    'type': 'call_rejected',
+                    'call_id': call_id
+                })
+            del active_calls[call_id]
+    elif msg_type == 'call_end':
+        # Кто-то завершает звонок
+        call_id = data['call_id']
+        call = active_calls.pop(call_id, None)
+        if call:
+            # Уведомляем другого участника
+            other = call['callee'] if call['caller'] == sender else call['caller']
+            if other in call_connections:
+                await call_connections[other].send_json({
+                    'type': 'call_ended',
+                    'call_id': call_id
+                })
+    elif msg_type == 'webrtc_signal':
+        # Пересылка SDP или ICE кандидатов другому участнику
+        target = data['target']
+        if target in call_connections:
+            await call_connections[target].send_json({
+                'type': 'webrtc_signal',
+                'sender': sender,
+                'data': data['data']  # SDP или ICE candidate
+            })
+
+
 @app.post("/contacts/delete")
 async def delete_contact(user: str, contact: str, db: Session = Depends(get_db)):
     """Удаление контакта (мягкое удаление)"""
