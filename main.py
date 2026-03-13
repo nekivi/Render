@@ -1081,18 +1081,35 @@ async def websocket_endpoint(websocket: WebSocket, username: str):
     await websocket.accept()
     active_connections[username] = websocket
     print(f"WebSocket connected: {username}")
-    
+
     try:
         while True:
-            data = await websocket.receive_text()
-            if data == "ping":
+            message = await websocket.receive_text()
+            if message == "ping":
                 await websocket.send_text("pong")
-    
+                continue
+
+            # Пытаемся распарсить как JSON
+            try:
+                data = json.loads(message)
+                msg_type = data.get("type")
+                target = data.get("target")
+
+                if msg_type and target and target in active_connections:
+                    # Пересылаем сообщение целевому пользователю
+                    await active_connections[target].send_text(message)
+                    print(f"Forwarded {msg_type} from {username} to {target}")
+                else:
+                    # Если нет целевого пользователя, возможно это broadcast или ошибка
+                    print(f"Received message from {username} with no target: {message[:100]}")
+            except json.JSONDecodeError:
+                # Не JSON, игнорируем
+                print(f"Received non-JSON message from {username}: {message[:100]}")
     except WebSocketDisconnect:
+        print(f"WebSocket disconnected: {username}")
         if username in active_connections:
             del active_connections[username]
-        print(f"WebSocket disconnected: {username}")
     except Exception as e:
         print(f"WebSocket error for {username}: {e}")
         if username in active_connections:
-            del active_connections[username]
+            del active_connections[username]]
