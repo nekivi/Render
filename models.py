@@ -40,6 +40,9 @@ class Message(Base):
     encrypted_key = Column(Text, nullable=False)
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
     delivered = Column(Integer, default=0)
+    edited = Column(Integer, default=0)       # 0 - не редактировалось, 1 - редактировалось
+    deleted = Column(Integer, default=0)      # 0 - активно, 1 - удалено (мягкое удаление)
+    edit_timestamp = Column(DateTime, nullable=True)  # время последнего редактирования
 
 class Group(Base):
     __tablename__ = "groups"
