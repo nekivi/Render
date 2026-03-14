@@ -15,20 +15,6 @@ from models import User, Message, Group, GroupMember, GroupMessage, GroupKey, Gr
 
 app = FastAPI()
 
-@app.get("/reset_db")
-def reset_database(db: Session = Depends(get_db)):
-    """Очищает все данные из базы (ТОЛЬКО ДЛЯ РАЗРАБОТКИ)"""
-    # Удаляем все записи из таблиц (порядок важен из-за внешних ключей)
-    db.query(GroupMessageDelivery).delete()
-    db.query(GroupKey).delete()
-    db.query(GroupMessage).delete()
-    db.query(GroupMember).delete()
-    db.query(Group).delete()
-    db.query(Contact).delete()
-    db.query(Message).delete()
-    db.query(User).delete()
-    db.commit()
-    return {"status": "ok", "message": "All data cleared"}
 
 # Разрешаем CORS
 app.add_middleware(
