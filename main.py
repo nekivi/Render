@@ -7,6 +7,7 @@ import datetime
 import asyncio
 import bcrypt
 import uuid
+from sqlalchemy import inspect, text
 from pydantic import BaseModel
 
 from database import engine, get_db, init_db  # Добавлен импорт engine
@@ -28,6 +29,34 @@ class MessageEdit(BaseModel):
     nonce: str
     tag: str
     encrypted_key: str
+
+@app.on_event("startup")
+def startup():
+    # Проверяем наличие колонок в таблице messages
+    inspector = inspect(engine)
+    if 'messages' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('messages')]
+        with engine.connect() as conn:
+            if 'edited' not in columns:
+                conn.execute(text("ALTER TABLE messages ADD COLUMN edited INTEGER DEFAULT 0"))
+                print("Added 'edited' column to messages table")
+            if 'deleted' not in columns:
+                conn.execute(text("ALTER TABLE messages ADD COLUMN deleted INTEGER DEFAULT 0"))
+                print("Added 'deleted' column to messages table")
+            if 'edit_timestamp' not in columns:
+                conn.execute(text("ALTER TABLE messages ADD COLUMN edit_timestamp TIMESTAMP"))
+                print("Added 'edit_timestamp' column to messages table")
+            conn.commit()
+    # Для таблицы contacts тоже можно добавить проверку, если нужно
+    if 'contacts' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('contacts')]
+        with engine.connect() as conn:
+            if 'deleted' not in columns:
+                conn.execute(text("ALTER TABLE contacts ADD COLUMN deleted INTEGER DEFAULT 0"))
+                print("Added 'deleted' column to contacts table")
+                conn.commit()
+    # Затем инициализируем остальные таблицы (если они не созданы)
+    init_db()
 
 @app.put("/messages/{message_id}")
 def edit_message(message_id: int, edit_data: MessageEdit, sender: str, db: Session = Depends(get_db)):
