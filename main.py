@@ -25,12 +25,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class MessageEdit(BaseModel):
-    ciphertext: str
-    nonce: str
-    tag: str
-    encrypted_key: str
-
 @app.on_event("startup")
 def startup():
     # Проверяем наличие колонок в таблице messages
