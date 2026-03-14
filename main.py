@@ -61,12 +61,19 @@ def startup():
 @app.put("/messages/{message_id}")
 def edit_message(message_id: int, edit_data: MessageEdit, sender: str, db: Session = Depends(get_db)):
     """Редактирование личного сообщения"""
+    print(f"\n=== EDIT MESSAGE {message_id} ===")
+    print(f"Sender: {sender}")
+    print(f"Edit data: {edit_data}")
+    
     msg = db.query(Message).filter(Message.id == message_id).first()
     if not msg:
+        print(f"Message {message_id} not found")
         raise HTTPException(status_code=404, detail="Message not found")
     
-    # Проверяем, что отправитель совпадает
+    print(f"Message found: sender={msg.sender}, recipient={msg.recipient}")
+    
     if msg.sender != sender:
+        print(f"Permission denied: msg.sender={msg.sender}, requester={sender}")
         raise HTTPException(status_code=403, detail="Not your message")
     
     # Обновляем поля
@@ -78,6 +85,7 @@ def edit_message(message_id: int, edit_data: MessageEdit, sender: str, db: Sessi
     msg.edit_timestamp = datetime.datetime.utcnow()
     
     db.commit()
+    print(f"Message {message_id} updated in DB")
     
     # Уведомляем получателя, если он онлайн
     if msg.recipient in active_connections:
@@ -94,6 +102,7 @@ def edit_message(message_id: int, edit_data: MessageEdit, sender: str, db: Sessi
                     "edit_timestamp": str(msg.edit_timestamp)
                 })
             )
+            print(f"Notification sent to {msg.recipient}")
         except Exception as e:
             print(f"Error sending edit notification: {e}")
     
@@ -102,15 +111,23 @@ def edit_message(message_id: int, edit_data: MessageEdit, sender: str, db: Sessi
 @app.delete("/messages/{message_id}")
 def delete_message(message_id: int, sender: str, db: Session = Depends(get_db)):
     """Удаление личного сообщения (мягкое удаление)"""
+    print(f"\n=== DELETE MESSAGE {message_id} ===")
+    print(f"Sender: {sender}")
+    
     msg = db.query(Message).filter(Message.id == message_id).first()
     if not msg:
+        print(f"Message {message_id} not found")
         raise HTTPException(status_code=404, detail="Message not found")
     
+    print(f"Message found: sender={msg.sender}, recipient={msg.recipient}")
+    
     if msg.sender != sender:
+        print(f"Permission denied: msg.sender={msg.sender}, requester={sender}")
         raise HTTPException(status_code=403, detail="Not your message")
     
     msg.deleted = 1
     db.commit()
+    print(f"Message {message_id} marked as deleted")
     
     # Уведомляем получателя
     if msg.recipient in active_connections:
@@ -122,6 +139,7 @@ def delete_message(message_id: int, sender: str, db: Session = Depends(get_db)):
                     "sender": sender
                 })
             )
+            print(f"Notification sent to {msg.recipient}")
         except Exception as e:
             print(f"Error sending delete notification: {e}")
     
