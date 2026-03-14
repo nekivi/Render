@@ -23,6 +23,81 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class MessageEdit(BaseModel):
+    ciphertext: str
+    nonce: str
+    tag: str
+    encrypted_key: str
+
+@app.put("/messages/{message_id}")
+def edit_message(message_id: int, edit_data: MessageEdit, sender: str, db: Session = Depends(get_db)):
+    """Редактирование личного сообщения"""
+    msg = db.query(Message).filter(Message.id == message_id).first()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    
+    # Проверяем, что отправитель совпадает
+    if msg.sender != sender:
+        raise HTTPException(status_code=403, detail="Not your message")
+    
+    # Обновляем поля
+    msg.ciphertext = edit_data.ciphertext
+    msg.nonce = edit_data.nonce
+    msg.tag = edit_data.tag
+    msg.encrypted_key = edit_data.encrypted_key
+    msg.edited = 1
+    msg.edit_timestamp = datetime.datetime.utcnow()
+    
+    db.commit()
+    
+    # Уведомляем получателя, если он онлайн
+    if msg.recipient in active_connections:
+        try:
+            asyncio.create_task(
+                active_connections[msg.recipient].send_json({
+                    "type": "message_edited",
+                    "message_id": msg.id,
+                    "sender": sender,
+                    "ciphertext": msg.ciphertext,
+                    "nonce": msg.nonce,
+                    "tag": msg.tag,
+                    "encrypted_key": msg.encrypted_key,
+                    "edit_timestamp": str(msg.edit_timestamp)
+                })
+            )
+        except Exception as e:
+            print(f"Error sending edit notification: {e}")
+    
+    return {"status": "ok"}
+
+@app.delete("/messages/{message_id}")
+def delete_message(message_id: int, sender: str, db: Session = Depends(get_db)):
+    """Удаление личного сообщения (мягкое удаление)"""
+    msg = db.query(Message).filter(Message.id == message_id).first()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    
+    if msg.sender != sender:
+        raise HTTPException(status_code=403, detail="Not your message")
+    
+    msg.deleted = 1
+    db.commit()
+    
+    # Уведомляем получателя
+    if msg.recipient in active_connections:
+        try:
+            asyncio.create_task(
+                active_connections[msg.recipient].send_json({
+                    "type": "message_deleted",
+                    "message_id": msg.id,
+                    "sender": sender
+                })
+            )
+        except Exception as e:
+            print(f"Error sending delete notification: {e}")
+    
+    return {"status": "ok"}
+
 @app.post("/contacts/delete")
 async def delete_contact(user: str, contact: str, db: Session = Depends(get_db)):
     """Удаление контакта (мягкое удаление)"""
