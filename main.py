@@ -563,7 +563,7 @@ async def send_message(message: MessageSend, sender: str, db: Session = Depends(
 
 @app.get("/messages/{username}")
 def get_undelivered_messages(username: str, db: Session = Depends(get_db)):
-    """Получить все недоставленные личные сообщения"""
+    """Получить все недоставленные личные сообщения (включая удалённые, но не помеченные доставленными)"""
     messages = db.query(Message).filter(
         Message.recipient == username,
         Message.delivered == 0
@@ -578,12 +578,14 @@ def get_undelivered_messages(username: str, db: Session = Depends(get_db)):
             "nonce": msg.nonce,
             "tag": msg.tag,
             "encrypted_key": msg.encrypted_key,
-            "timestamp": msg.timestamp.isoformat() + "Z"
+            "timestamp": str(msg.timestamp),
+            "edited": msg.edited,
+            "deleted": msg.deleted,
+            "edit_timestamp": str(msg.edit_timestamp) if msg.edit_timestamp else None
         })
         msg.delivered = 1
     
     db.commit()
-    
     return {"messages": result}
 
 @app.get("/messages/history/{username}")
